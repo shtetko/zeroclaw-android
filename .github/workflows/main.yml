@@ -5,23 +5,33 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch: # Manual trigger လုပ်လို့ရအောင် ထည့်ထားတာပါ
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
 
-      - name: Install Rust
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-unknown-linux-gnu
+          targets: aarch64-linux-android, armv7-linux-androideabi
 
-      - name: Build
-        run: cargo build --release --target aarch64-unknown-linux-gnu
+      - name: Install Android NDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y android-sdk-ndk
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk-bundle" >> $GITHUB_ENV
 
-      - name: Upload Binary
+      - name: Build for Android (aarch64)
+        run: cargo build --release --target aarch64-linux-android --locked
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: zeroclaw-android-arm64
-          path: target/aarch64-unknown-linux-gnu/release/zeroclaw
+          name: zeroclaw-android-aarch64
+          path: target/aarch64-linux-android/release/zeroclaw
+          
