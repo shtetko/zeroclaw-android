@@ -18,7 +18,7 @@ jobs:
           targets: aarch64-unknown-linux-gnu
 
       - name: Build
-        run: cargo build --release --target aarch64-unknown-linux-gnu --locked
+        run: cargo build --release --target aarch64-unknown-linux-gnu
 
       - name: Upload Binary
         uses: actions/upload-artifact@v4
