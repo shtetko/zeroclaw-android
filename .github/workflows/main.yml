@@ -1,93 +1,107 @@
-name: Secure Android Release
+name: Android Release Only
 
 on:
-  push:
-    tags: ["v*"]
-  workflow_dispatch:
+    push:
+        tags: ["v*"]
+    workflow_dispatch:
+        inputs:
+            publish_release:
+                description: "Publish a GitHub release"
+                required: false
+                default: true
+                type: boolean
 
 permissions:
-  contents: write
-  id-token: write
+    contents: write
+    id-token: write 
 
 jobs:
-  build-android:
-    name: Build Android (${{ matrix.target }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false # တစ်ခု error တက်လည်း ကျန်တာ ဆက်လုပ်ဖို့
-      matrix:
-        include:
-          - target: aarch64-linux-android
-            arch: arm64
-          - target: armv7-linux-androideabi
-            arch: armv7
-    steps:
-      - uses: actions/checkout@v4
+    build-android:
+        name: Build ${{ matrix.target }}
+        runs-on: ubuntu-latest
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - target: aarch64-linux-android
+                      arch: arm64
+                      android_api: 21
+                    - target: armv7-linux-androideabi
+                      arch: armv7
+                      android_api: 21
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
+        steps:
+            - uses: actions/checkout@v4
 
-      # ပြင်ဆင်လိုက်တဲ့အပိုင်း: ပိုစိတ်ချရတဲ့ Android Setup ကို သုံးထားပါတယ်
-      - name: Setup Android SDK & NDK
-        uses: android-actions/setup-android@v3
-      
-      - name: Install NDK
-        run: sdkmanager "ndk;26.1.10909125" # version ကို လိုသလို ပြင်နိုင်ပါတယ်
+            - name: Setup Rust
+                uses: dtolnay/rust-toolchain@stable
+                with:
+                    toolchain: 1.92.0
+                    targets: ${{ matrix.target }}
 
-      - name: Build Release
-        run: |
-          # NDK path ကို ရှာပြီး linker သတ်မှတ်ခြင်း
-          export ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.1.10909125
-          export AR=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
-          cargo build --release --target ${{ matrix.target }}
+            - name: Setup Android NDK
+                shell: bash
+                run: |
+                    NDK_VERSION="r26d"
+                    NDK_ZIP="android-ndk-${NDK_VERSION}-linux.zip"
+                    NDK_URL="https://dl.google.com/android/repository/${NDK_ZIP}"
+                    NDK_ROOT="${RUNNER_TEMP}/android-ndk"
+                    NDK_HOME="${NDK_ROOT}/android-ndk-${NDK_VERSION}"
+                    
+                    sudo apt-get update -qq && sudo apt-get install -y unzip
+                    mkdir -p "${NDK_ROOT}"
+                    curl -fsSL "${NDK_URL}" -o "${RUNNER_TEMP}/${NDK_ZIP}"
+                    unzip -q "${RUNNER_TEMP}/${NDK_ZIP}" -d "${NDK_ROOT}"
+                    
+                    echo "ANDROID_NDK_HOME=${NDK_HOME}" >> "$GITHUB_ENV"
+                    echo "${NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
 
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: zeroclaw-${{ matrix.arch }}
-          path: target/${{ matrix.target }}/release/zeroclaw
+            - name: Build Android Binary
+                shell: bash
+                run: |
+                    TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+                    if [[ "${{ matrix.target }}" == "aarch64-linux-android" ]]; then
+                        export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${TOOLCHAIN}/aarch64-linux-android${{ matrix.android_api }}-clang"
+                    else
+                        export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="${TOOLCHAIN}/armv7a-linux-androideabi${{ matrix.android_api }}-clang"
+                    fi
+                    cargo build --release --target ${{ matrix.target }}
 
-  publish:
-    name: Secure Publish
-    needs: build-android
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
+            - name: Upload Artifacts
+                uses: actions/upload-artifact@v4
+                with:
+                    name: zeroclaw-${{ matrix.arch }}
+                    path: target/${{ matrix.target }}/release/zeroclaw
 
-      - name: Install syft
-        run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
-      
-      - name: Generate SBOM
-        run: syft dir:. -o cyclonedx-json=artifacts/sbom.json
+    publish:
+        name: Secure Publish
+        needs: build-android
+        if: github.event_name == 'push' || inputs.publish_release == true
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/download-artifact@v4
+                with:
+                    path: artifacts
 
-      - name: Generate Checksums
-        run: |
-          cd artifacts
-          # ဖိုင်တွေကို folder အလိုက် ခွဲမနေအောင် ရှာပြီး checksum လုပ်တာပါ
-          find . -type f -exec sha256sum {} + > SHA256SUMS
+            - name: Generate Security Assets (SBOM & Checksum)
+                run: |
+                    curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+                    syft dir:. -o cyclonedx-json=artifacts/sbom.json
+                    cd artifacts && find . -type f -exec sha256sum {} + > SHA256SUMS
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3.4.0
+            - name: Sign with Cosign
+                uses: sigstore/cosign-installer@v3.4.0
+            - name: Sign Artifacts
+                run: |
+                    find artifacts -type f ! -name '*.sig' -print0 | xargs -0 -I {} cosign sign-blob --yes --output-signature {}.sig {}
+                env:
+                    COSIGN_EXPERIMENTAL: 1
 
-      - name: Sign artifacts
-        run: |
-          # လက်မှတ်ထိုးမယ့်အပိုင်း
-          find artifacts -type f ! -name '*.sig' -print0 | xargs -0 -I {} cosign sign-blob --yes --output-signature {}.sig {}
-        env:
-          COSIGN_EXPERIMENTAL: 1
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            artifacts/**/*
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
+            - name: Create GitHub Release
+                uses: softprops/action-gh-release@v2
+                with:
+                    files: artifacts/**/*
+                    generate_release_notes: true
+                env:
+                    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
