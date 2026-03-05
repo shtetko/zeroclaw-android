@@ -1,37 +1,65 @@
-name: Build ZeroClaw for Android
+name: Android Release Only
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch: # Manual trigger လုပ်လို့ရအောင် ထည့်ထားတာပါ
+    tags: ["v*"] # v1.0.0 စသဖြင့် tag push လုပ်မှ အလုပ်လုပ်မယ်
+  workflow_dispatch: # ကိုယ်တိုင် manual run ချင်ရင်လည်း ရတယ်
 
 jobs:
-  build:
+  build-android:
+    name: Build Android Binaries
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-linux-android
+            arch: arm64
+          - target: armv7-linux-androideabi
+            arch: armv7
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install Rust Toolchain
+      # 1. Rust နဲ့ Android Target တွေ သွင်းခြင်း
+      - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android, armv7-linux-androideabi
+          toolchain: stable
+          targets: ${{ matrix.target }}
 
-      - name: Install Android NDK
+      # 2. Android NDK ကို သွင်းခြင်း (Build လုပ်ဖို့ လိုအပ်ပါတယ်)
+      - name: Setup Android NDK
+        uses: nndung179/setup-ndk@v1
+        with:
+          ndk-version: r26b
+
+      # 3. Compile လုပ်ခြင်း
+      - name: Build Release
         run: |
-          sudo apt-get update
-          sudo apt-get install -y android-sdk-ndk
-          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk-bundle" >> $GITHUB_ENV
+          # NDK toolchain path ကို သတ်မှတ်ပေးရပါမယ်
+          export AR=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
+          cargo build --release --target ${{ matrix.target }}
 
-      - name: Build for Android (aarch64)
-        run: cargo build --release --target aarch64-linux-android --locked
-
-      - name: Upload Artifact
+      # 4. ထွက်လာတဲ့ဖိုင်ကို သိမ်းဆည်းခြင်း
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: zeroclaw-android-aarch64
-          path: target/aarch64-linux-android/release/zeroclaw
-          
+          name: zeroclaw-${{ matrix.arch }}
+          path: target/${{ matrix.target }}/release/zeroclaw # ဖိုင်နာမည်ကို ပြင်ရန်
+
+  publish:
+    name: Publish to GitHub
+    needs: build-android
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            **/zeroclaw
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
