@@ -1,109 +1,58 @@
-name: Android Release Only
+name: Android Build
 
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      publish_release:
-        description: "Publish a GitHub release"
-        required: false
-        default: true
-        type: boolean
-
-permissions:
-  contents: write
-  id-token: write 
+  push:
+    branches: [main]
 
 jobs:
   build-android:
-    name: Build ${{ matrix.target }}
     runs-on: ubuntu-latest
+
     strategy:
-      fail-fast: false
       matrix:
-        include:
-          - target: aarch64-linux-android
-            arch: arm64
-            android_api: 21
-          - target: armv7-linux-androideabi
-            arch: armv7
-            android_api: 21
+        target:
+          - aarch64-linux-android
+          - armv7-linux-androideabi
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup Rust
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.82.0 # မူရင်း version သို့မဟုတ် stable သုံးပါ
           targets: ${{ matrix.target }}
 
-      - name: Setup Android NDK
-        shell: bash
+      - name: Install dependencies
         run: |
-          NDK_VERSION="r26d"
-          NDK_ZIP="android-ndk-${NDK_VERSION}-linux.zip"
-          NDK_URL="https://dl.google.com/android/repository/${NDK_ZIP}"
-          NDK_ROOT="${RUNNER_TEMP}/android-ndk"
-          NDK_HOME="${NDK_ROOT}/android-ndk-${NDK_VERSION}"
-          
-          sudo apt-get update -qq && sudo apt-get install -y unzip
-          mkdir -p "${NDK_ROOT}"
-          curl -fsSL "${NDK_URL}" -o "${RUNNER_TEMP}/${NDK_ZIP}"
-          unzip -q "${RUNNER_TEMP}/${NDK_ZIP}" -d "${NDK_ROOT}"
-          
-          echo "ANDROID_NDK_HOME=${NDK_HOME}" >> "$GITHUB_ENV"
-          echo "${NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
+          sudo apt-get update
+          sudo apt-get install -y unzip curl
 
-      - name: Build Android Binary
-        shell: bash
+      - name: Install Android NDK
         run: |
-          TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          if [[ "${{ matrix.target }}" == "aarch64-linux-android" ]]; then
-              export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${TOOLCHAIN}/aarch64-linux-android${{ matrix.android_api }}-clang"
+          NDK_VERSION=r26d
+          wget https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip
+          unzip android-ndk-${NDK_VERSION}-linux.zip
+          echo "ANDROID_NDK_HOME=$PWD/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
+          echo "$PWD/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+
+      - name: Configure linker
+        run: |
+          TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
+
+          if [ "${{ matrix.target }}" = "aarch64-linux-android" ]; then
+            echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$TOOLCHAIN/aarch64-linux-android21-clang" >> $GITHUB_ENV
           else
-              export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="${TOOLCHAIN}/armv7a-linux-androideabi${{ matrix.android_api }}-clang"
+            echo "CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER=$TOOLCHAIN/armv7a-linux-androideabi21-clang" >> $GITHUB_ENV
           fi
-          # Build process စတင်ခြင်း
+
+      - name: Build
+        run: |
           cargo build --release --target ${{ matrix.target }}
 
-      - name: Upload Artifacts
+      - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: zeroclaw-${{ matrix.arch }}
-          path: target/${{ matrix.target }}/release/zeroclaw
-
-  publish:
-    name: Secure Publish
-    needs: build-android
-    if: github.event_name == 'push' || github.event.inputs.publish_release == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Generate Security Assets (SBOM & Checksum)
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
-          syft dir:. -o cyclonedx-json=artifacts/sbom.json
-          cd artifacts && find . -type f -exec sha256sum {} + > SHA256SUMS
-
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@v3.4.0
-
-      - name: Sign Artifacts
-        run: |
-          find artifacts -type f ! -name '*.sig' -print0 | xargs -0 -I {} cosign sign-blob --yes --output-signature {}.sig {}
-        env:
-          COSIGN_EXPERIMENTAL: 1
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/**/*
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: zeroclaw-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/zeroclaw*
