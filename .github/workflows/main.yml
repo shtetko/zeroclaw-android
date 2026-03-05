@@ -1,65 +1,93 @@
-name: Android Release Only
+name: Secure Android Release
 
 on:
   push:
-    tags: ["v*"] # v1.0.0 စသဖြင့် tag push လုပ်မှ အလုပ်လုပ်မယ်
-  workflow_dispatch: # ကိုယ်တိုင် manual run ချင်ရင်လည်း ရတယ်
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
 
 jobs:
   build-android:
-    name: Build Android Binaries
+    name: Build Android (${{ matrix.target }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false # တစ်ခု error တက်လည်း ကျန်တာ ဆက်လုပ်ဖို့
       matrix:
         include:
           - target: aarch64-linux-android
             arch: arm64
           - target: armv7-linux-androideabi
             arch: armv7
-
     steps:
       - uses: actions/checkout@v4
 
-      # 1. Rust နဲ့ Android Target တွေ သွင်းခြင်း
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
 
-      # 2. Android NDK ကို သွင်းခြင်း (Build လုပ်ဖို့ လိုအပ်ပါတယ်)
-      - name: Setup Android NDK
-        uses: nndung179/setup-ndk@v1
-        with:
-          ndk-version: r26b
+      # ပြင်ဆင်လိုက်တဲ့အပိုင်း: ပိုစိတ်ချရတဲ့ Android Setup ကို သုံးထားပါတယ်
+      - name: Setup Android SDK & NDK
+        uses: android-actions/setup-android@v3
+      
+      - name: Install NDK
+        run: sdkmanager "ndk;26.1.10909125" # version ကို လိုသလို ပြင်နိုင်ပါတယ်
 
-      # 3. Compile လုပ်ခြင်း
       - name: Build Release
         run: |
-          # NDK toolchain path ကို သတ်မှတ်ပေးရပါမယ်
-          export AR=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
+          # NDK path ကို ရှာပြီး linker သတ်မှတ်ခြင်း
+          export ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.1.10909125
+          export AR=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
           cargo build --release --target ${{ matrix.target }}
 
-      # 4. ထွက်လာတဲ့ဖိုင်ကို သိမ်းဆည်းခြင်း
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: zeroclaw-${{ matrix.arch }}
-          path: target/${{ matrix.target }}/release/zeroclaw # ဖိုင်နာမည်ကို ပြင်ရန်
+          path: target/${{ matrix.target }}/release/zeroclaw
 
   publish:
-    name: Publish to GitHub
+    name: Secure Publish
     needs: build-android
     runs-on: ubuntu-latest
     steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Install syft
+        run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+      
+      - name: Generate SBOM
+        run: syft dir:. -o cyclonedx-json=artifacts/sbom.json
+
+      - name: Generate Checksums
+        run: |
+          cd artifacts
+          # ဖိုင်တွေကို folder အလိုက် ခွဲမနေအောင် ရှာပြီး checksum လုပ်တာပါ
+          find . -type f -exec sha256sum {} + > SHA256SUMS
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.4.0
+
+      - name: Sign artifacts
+        run: |
+          # လက်မှတ်ထိုးမယ့်အပိုင်း
+          find artifacts -type f ! -name '*.sig' -print0 | xargs -0 -I {} cosign sign-blob --yes --output-signature {}.sig {}
+        env:
+          COSIGN_EXPERIMENTAL: 1
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            **/zeroclaw
+            artifacts/**/*
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
