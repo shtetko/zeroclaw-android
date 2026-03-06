@@ -15,24 +15,19 @@ jobs:
         with:
           targets: aarch64-linux-android
 
-      - name: Install Android NDK
+      - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
         id: ndk
         with:
-          ndk-version: r26d
+          ndk-version: r25b
 
-      - name: Add NDK toolchain to PATH
+      - name: Export NDK toolchain to PATH
         run: echo "${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
-      - name: Print NDK path
-        run: echo $NDK_HOME
-      
-      - name: List toolchain
-        run: ls $NDK_HOME/toolchains/llvm/prebuilt/
-  
-      - name: Add clang to PATH
+      - name: Set linker (Cargo)
         run: |
-          echo "${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+          echo '[target.aarch64-linux-android]' >> .cargo/config.toml
+          echo 'linker = "aarch64-linux-android21-clang"' >> .cargo/config.toml
 
       - name: Build
-        run: cargo build --release --target aarch64-linux-android
+        run: cargo build --target aarch64-linux-android --release
