@@ -1,9 +1,6 @@
-name: Build ARM64
+name: Android Build
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
 
 jobs:
@@ -13,17 +10,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-unknown-linux-gnu
+          targets: aarch64-linux-android
 
-      - name: Install cross
-        run: cargo install cross
-
-      - name: Build
-        run: cross build --release --target aarch64-unknown-linux-gnu
-
-      - uses: actions/upload-artifact@v4
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
         with:
-          name: zeroclaw-arm64
-          path: target/aarch64-unknown-linux-gnu/release/
+          ndk-version: r25b
+
+      - name: Add NDK to PATH
+        run: echo "PATH=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH" >> $GITHUB_ENV
+
+      - name: Build Android (arm64 only)
+        run: cargo build --target aarch64-linux-android --release
