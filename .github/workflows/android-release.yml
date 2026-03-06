@@ -1,0 +1,116 @@
+name: Android ARM64 Release
+
+on:
+  push:
+    tags:
+      - 'v*'           # v1.0.0 လို tag push လုပ်တိုင်း trigger ဖြစ်မယ်
+  workflow_dispatch:   # GitHub UI ကနေ manual run လည်း လုပ်လို့ရမယ်
+
+jobs:
+  build-android-arm64:
+    name: Build Android ARM64 Binary
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Repo clone
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      # 2. Rust toolchain setup
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      # 3. Cache - build time လျှော့ချဖို့
+      - name: Cache Cargo registry & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-android-aarch64-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-android-aarch64-
+
+      # 4. Android NDK setup
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+          add-to-path: true
+
+      # 5. Cargo config - Android linker သတ်မှတ်
+      - name: Configure Cargo for Android target
+        run: |
+          mkdir -p ~/.cargo
+          cat >> ~/.cargo/config.toml << 'EOF'
+          [target.aarch64-linux-android]
+          linker = "${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang"
+          ar = "${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+          EOF
+
+      # 6. Build
+      - name: Build ZeroClaw for Android ARM64
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          CC_aarch64_linux_android: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang
+          CXX_aarch64_linux_android: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang++
+          AR_aarch64_linux_android: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang
+        run: |
+          cargo build --release --locked --target aarch64-linux-android
+
+      # 7. Binary rename & compress
+      - name: Prepare release artifact
+        run: |
+          cp target/aarch64-linux-android/release/zeroclaw zeroclaw-aarch64-android
+          tar -czf zeroclaw-aarch64-android.tar.gz zeroclaw-aarch64-android
+          sha256sum zeroclaw-aarch64-android.tar.gz > zeroclaw-aarch64-android.tar.gz.sha256
+
+      # 8. GitHub Release တင်မယ်
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "ZeroClaw ${{ github.ref_name }} — Android ARM64"
+          body: |
+            ## 📱 ZeroClaw Android ARM64 Release
+
+            ### ဒီ release မှာ ပါတာ
+            - `zeroclaw-aarch64-android` — Android ARM64 binary (Termux / rooted device)
+            - `zeroclaw-aarch64-android.tar.gz` — Compressed archive
+            - `zeroclaw-aarch64-android.tar.gz.sha256` — Checksum file
+
+            ### Android မှာ သုံးနည်း (Termux)
+            ```bash
+            # Download
+            wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/zeroclaw-aarch64-android.tar.gz
+
+            # Extract
+            tar -xzf zeroclaw-aarch64-android.tar.gz
+
+            # Permission ပေး
+            chmod +x zeroclaw-aarch64-android
+
+            # Run
+            ./zeroclaw-aarch64-android --help
+            ```
+
+            ### Requirements
+            - Android 8.0+ (API 26+)
+            - Termux သို့မဟုတ် rooted device
+            - ARM64 processor (aarch64)
+
+            ---
+            Built with Rust stable · Android NDK r27c · Target: `aarch64-linux-android`
+          files: |
+            zeroclaw-aarch64-android
+            zeroclaw-aarch64-android.tar.gz
+            zeroclaw-aarch64-android.tar.gz.sha256
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
