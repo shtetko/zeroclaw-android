@@ -1,8 +1,9 @@
-name: Android Build
+name: Android Arm64 Release
 
 on:
   push:
-    branches: ["main"]
+    tags:
+      - "v*"
   workflow_dispatch:
 
 env:
@@ -13,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout source
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install Rust
@@ -26,17 +27,28 @@ jobs:
         with:
           ndk-version: r26d
 
-      - name: Set environment
+      - name: Configure Android linker
         run: |
-          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
           echo "CC_aarch64_linux_android=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang" >> $GITHUB_ENV
           echo "AR_aarch64_linux_android=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> $GITHUB_ENV
 
       - name: Build Android arm64
-        run: cargo build --release --target aarch64-linux-android
+        run: |
+          cargo build --release --target aarch64-linux-android
 
-      - name: Upload binary
-        uses: actions/upload-artifact@v4
+      - name: Strip Binary (Reduce Size)
+        run: |
+          $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip target/aarch64-linux-android/release/* || true
+
+      - name: Package
+        run: |
+          mkdir dist
+          cp target/aarch64-linux-android/release/* dist/
+          tar -czvf zeroclaw-android-arm64.tar.gz dist
+
+      - name: Upload Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: zeroclaw-android-arm64
-          path: target/aarch64-linux-android/release/
+          files: zeroclaw-android-arm64.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
