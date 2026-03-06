@@ -21,6 +21,12 @@ jobs:
         with:
           ndk-version: r26d
 
+      - name: Print NDK path
+        run: echo $NDK_HOME
+      
+      - name: List toolchain
+        run: ls $NDK_HOME/toolchains/llvm/prebuilt/
+  
       - name: Add clang to PATH
         run: |
           echo "${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
