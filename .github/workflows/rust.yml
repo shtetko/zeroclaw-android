@@ -1,54 +1,30 @@
-name: Android Arm64 Release
+name: Android Build
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
-  build-android:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
 
-      - name: Install Android NDK
+      - name: Install NDK
         uses: nttld/setup-ndk@v1
+        id: ndk
         with:
           ndk-version: r26d
 
-      - name: Configure Android linker
+      - name: Setup linker
         run: |
-          echo "CC_aarch64_linux_android=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang" >> $GITHUB_ENV
-          echo "AR_aarch64_linux_android=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> $GITHUB_ENV
+          echo "CC_aarch64_linux_android=${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang" >> $GITHUB_ENV
+          echo "AR_aarch64_linux_android=${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> $GITHUB_ENV
 
-      - name: Build Android arm64
-        run: |
-          cargo build --release --target aarch64-linux-android
-
-      - name: Strip Binary (Reduce Size)
-        run: |
-          $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip target/aarch64-linux-android/release/* || true
-
-      - name: Package
-        run: |
-          mkdir dist
-          cp target/aarch64-linux-android/release/* dist/
-          tar -czvf zeroclaw-android-arm64.tar.gz dist
-
-      - name: Upload Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: zeroclaw-android-arm64.tar.gz
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build
+        run: cargo build --release --target aarch64-linux-android
